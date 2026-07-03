@@ -1,20 +1,20 @@
 {
  "actions": [],
  "allow_rename": 1,
- "creation": "2026-06-30 12:18:01.034597",
+ "creation": "2026-06-30 15:05:25.424644",
  "doctype": "DocType",
  "engine": "InnoDB",
  "field_order": [
   "enabled",
-  "column_break_dmkt",
+  "column_break_xdce",
   "record_calls",
-  "section_break_wagb",
+  "section_break_cxii",
   "login_id",
-  "email",
-  "password",
-  "access_token",
-  "column_break_iebp",
   "api_token",
+  "email",
+  "access_token",
+  "column_break_nzll",
+  "password",
   "api_key",
   "webhook_verify_token",
   "token_expiry"
@@ -27,7 +27,7 @@
    "label": "Enabled"
   },
   {
-   "fieldname": "column_break_dmkt",
+   "fieldname": "column_break_xdce",
    "fieldtype": "Column Break"
   },
   {
@@ -37,7 +37,7 @@
    "label": "Record Calls"
   },
   {
-   "fieldname": "section_break_wagb",
+   "fieldname": "section_break_cxii",
    "fieldtype": "Section Break"
   },
   {
@@ -47,7 +47,7 @@
   },
   {
    "fieldname": "email",
-   "fieldtype": "Int",
+   "fieldtype": "Data",
    "label": "Email"
   },
   {
@@ -56,7 +56,12 @@
    "label": "Password"
   },
   {
-   "fieldname": "column_break_iebp",
+   "fieldname": "access_token",
+   "fieldtype": "Password",
+   "label": "Access Token"
+  },
+  {
+   "fieldname": "column_break_nzll",
    "fieldtype": "Column Break"
   },
   {
@@ -71,13 +76,8 @@
   },
   {
    "fieldname": "webhook_verify_token",
-   "fieldtype": "Password",
+   "fieldtype": "Data",
    "label": "Webhook Verify Token"
-  },
-  {
-   "fieldname": "access_token",
-   "fieldtype": "Password",
-   "label": "Access Token"
   },
   {
    "fieldname": "token_expiry",
@@ -89,7 +89,7 @@
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-06-30 13:34:09.756281",
+ "modified": "2026-07-03 11:42:52.340413",
  "modified_by": "Administrator",
  "module": "FTelephony",
  "name": "TP Smartflow Settings",
@@ -110,5 +110,6 @@
  "rows_threshold_for_grid_search": 20,
  "sort_field": "modified",
  "sort_order": "DESC",
- "states": []
+ "states": [],
+ "track_changes": 1
 }

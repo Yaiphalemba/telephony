@@ -33,27 +33,73 @@ def handle_request(**kwargs):
             return
 
         call_payload = kwargs
-
-        # This publishes the exact event your frontend needs for the floating popup
-        frappe.publish_realtime("smartflow_call", call_payload)  # nosemgrep
-
         status = call_payload.get("status")
+        
         # Drop junk/ping events early
         if status == "free" or not call_payload.get("call_id"):
             return
 
-        if call_log := get_call_log(call_payload):
-            update_call_log(call_payload, call_log=call_log)
+        # 1. Get or create the call log
+        if call_log_doc := get_call_log(call_payload):
+            call_log_doc = update_call_log(call_payload, call_log=call_log_doc)
         else:
-            # Map the inbound keys. Smartflow usually sends 'customer_number' as the client and 'display_number' or 'agent_number' for the agent.
-            create_call_log(
+            # Safely extract numbers using Tata's actual JSON keys
+            from_num = call_payload.get("caller_id_number") or call_payload.get("customer_number")
+            to_num = call_payload.get("call_to_number") or call_payload.get("display_number")
+            
+            # Find the Agent
+            agent_num = call_payload.get("agent_number")
+            if not agent_num and to_num:
+                # Look up the agent based on the incoming virtual number
+                agent_user = frappe.db.get_value("TP Telephony Agent", {"smartflow_number": to_num}, "user")
+                if agent_user:
+                    agent_num = agent_user 
+
+            call_log_doc = create_call_log(
                 call_id=call_payload.get("call_id"),
-                from_number=call_payload.get("customer_number") or call_payload.get("from"),
-                to_number=call_payload.get("display_number") or call_payload.get("to"),
-                medium=call_payload.get("destination"),
+                from_number=from_num,
+                to_number=to_num,
+                medium="Smartflow",
                 status=get_call_log_status(call_payload),
-                agent=call_payload.get("agent_number"),
+                agent=agent_num,
             )
+
+            # Map the Start Time immediately from the initial webhook!
+            if start_stamp := call_payload.get("start_stamp"):
+                call_log_doc.start_time = start_stamp
+                call_log_doc.save(ignore_permissions=True)
+                frappe.db.commit()
+
+        # 2. THE MAGIC FIX: Trigger the native ERPNext UI using the exact events it listens for
+        if call_log_doc:
+            doc_dict = call_log_doc.as_dict()
+            internal_status = call_log_doc.status
+            
+            # PREVENT JS CRASH: call_popup.js absolutely requires a links array
+            if "links" not in doc_dict or not doc_dict["links"]:
+                doc_dict["links"] = []
+
+            # Always try to route to the actual Agent receiving the call
+            target_user = call_log_doc.receiver
+            
+            # Fallback for manual console testing ONLY
+            if not target_user and frappe.session.user != "Guest":
+                target_user = frappe.session.user
+                
+            # If it's an actual call but we couldn't find an Agent profile, log a warning
+            if not target_user:
+                frappe.logger("telephony").warning(f"Smartflow Popup Failed: No Agent mapped to virtual number {call_log_doc.to}")
+            
+            # Broadcast to the socket room based on the call lifecycle
+            if internal_status in ["Initiated", "Ringing", "In Progress"]:
+                frappe.publish_realtime("show_call_popup", doc_dict, user=target_user)
+                
+            elif internal_status in ["Completed", "Busy", "Failed"]:
+                frappe.publish_realtime(f"call_{call_log_doc.id}_ended", doc_dict, user=target_user)
+                
+            elif internal_status in ["No Answer", "Canceled", "Missed"]:
+                frappe.publish_realtime(f"call_{call_log_doc.id}_missed", doc_dict, user=target_user)
+
     except Exception:
         request_log.status = "Failed"
         request_log.error = frappe.get_traceback()
@@ -65,7 +111,7 @@ def handle_request(**kwargs):
         frappe.db.commit()  # nosemgrep
 
 
-@frappe.whitelist()
+@frappe.whitelist(allow_guest=True)
 def make_a_call(to_number, from_number=None, caller_id=None, link_doctype=None, link_docname=None):
     """Click-to-call execution"""
     if not is_integration_enabled():
@@ -87,7 +133,7 @@ def make_a_call(to_number, from_number=None, caller_id=None, link_doctype=None, 
     settings = get_smartflow_settings()
     record_call = settings.record_calls
 
-    endpoint = "https://api.smartflo.tatatelebusiness.com/v1/click_to_call"
+    endpoint = "https://api-smartflo.tatateleservices.com/v1/click_to_call"
     headers = {
         "Authorization": f"Bearer {settings.api_token}",
         "Accept": "application/json",
@@ -96,7 +142,8 @@ def make_a_call(to_number, from_number=None, caller_id=None, link_doctype=None, 
 
     payload = {
         "agent_number": from_number,
-        "customer_number": to_number,
+        "destination_number": to_number,
+        "get_call_id": 1,
         "caller_id": caller_id,
         "record": 1 if record_call else 0
     }

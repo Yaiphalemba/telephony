@@ -7,7 +7,7 @@ from frappe.model.document import Document
 
 SMARTFLO_BASE_URL = "https://api-smartflo.tatateleservices.com"
 
-class SmartfloSettings(Document):
+class TPSmartflowSettings(Document):
     def validate(self):
         if self.enabled and self.login_id and self.password:
             self.fetch_and_store_token()
@@ -24,8 +24,6 @@ class SmartfloSettings(Document):
             # token_type is "bearer", expires_in is 3600 seconds
             from frappe.utils import add_to_date, now_datetime
             self.token_expiry = add_to_date(now_datetime(), seconds=data.get("expires_in", 3600))
-            self.save()
-            frappe.msgprint("Smartflo Authentication Successful.")
         else:
             frappe.throw(f"Smartflo Auth Failed: {data.get('message', 'Unknown error')}")
 

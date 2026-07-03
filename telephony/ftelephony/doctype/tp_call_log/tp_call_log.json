@@ -115,7 +115,7 @@
   },
   {
    "fieldname": "recording_url",
-   "fieldtype": "Data",
+   "fieldtype": "Small Text",
    "label": "Recording URL"
   },
   {
@@ -136,8 +136,8 @@
  ],
  "index_web_pages_for_search": 1,
  "links": [],
- "modified": "2025-10-10 15:03:12.638731",
- "modified_by": "Administrator",
+ "modified": "2026-07-03 15:23:53.467550",
+ "modified_by": "mangshatabams@rapifuzz.com",
  "module": "FTelephony",
  "name": "TP Call Log",
  "naming_rule": "By fieldname",
