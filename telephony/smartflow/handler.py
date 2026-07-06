@@ -43,15 +43,28 @@ def handle_request(**kwargs):
         if call_log_doc := get_call_log(call_payload):
             call_log_doc = update_call_log(call_payload, call_log=call_log_doc)
         else:
-            # Safely extract numbers using Tata's actual JSON keys
+            # FIX 1: Detect Tata's specific softphone directions
+            raw_dir = call_payload.get("direction", "inbound").lower()
+            call_type = "Outgoing" if raw_dir in ["outbound", "clicktocall", "click_to_call"] else "Incoming"
+
+            # Safely extract numbers
             from_num = call_payload.get("caller_id_number") or call_payload.get("customer_number")
             to_num = call_payload.get("call_to_number") or call_payload.get("display_number")
             
-            # Find the Agent
+            # Find the Agent dynamically based on direction!
             agent_num = call_payload.get("agent_number")
-            if not agent_num and to_num:
-                # Look up the agent based on the incoming virtual number
-                agent_user = frappe.db.get_value("TP Telephony Agent", {"smartflow_number": to_num}, "user")
+            
+            # FIX 2: Hunt for nested agent numbers in outbound softphone payloads
+            if not agent_num and isinstance(call_payload.get("answered_agent"), dict):
+                agent_num = call_payload["answered_agent"].get("agent_number")
+            
+            if not agent_num and isinstance(call_payload.get("answered_agent_number"), dict):
+                agent_num = call_payload["answered_agent_number"].get("follow_me_number")
+
+            if not agent_num:
+                # Fallback: lookup by virtual number mapped to the agent
+                lookup_num = from_num if call_type == "Outgoing" else to_num
+                agent_user = frappe.db.get_value("TP Telephony Agent", {"smartflow_number": lookup_num}, "user")
                 if agent_user:
                     agent_num = agent_user 
 
@@ -62,9 +75,10 @@ def handle_request(**kwargs):
                 medium="Smartflow",
                 status=get_call_log_status(call_payload),
                 agent=agent_num,
+                call_type=call_type  # Routes it correctly!
             )
 
-            # Map the Start Time immediately from the initial webhook!
+            # Map the Start Time immediately
             if start_stamp := call_payload.get("start_stamp"):
                 call_log_doc.start_time = start_stamp
                 call_log_doc.save(ignore_permissions=True)
