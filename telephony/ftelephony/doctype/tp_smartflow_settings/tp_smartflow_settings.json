@@ -58,7 +58,8 @@
   {
    "fieldname": "access_token",
    "fieldtype": "Password",
-   "label": "Access Token"
+   "label": "Access Token",
+   "read_only": 1
   },
   {
    "fieldname": "column_break_nzll",
@@ -82,14 +83,15 @@
   {
    "fieldname": "token_expiry",
    "fieldtype": "Datetime",
-   "label": "Token Expiry"
+   "label": "Token Expiry",
+   "read_only": 1
   }
  ],
  "grid_page_length": 50,
  "index_web_pages_for_search": 1,
  "issingle": 1,
  "links": [],
- "modified": "2026-07-03 11:42:52.340413",
+ "modified": "2026-07-06 12:15:14.329693",
  "modified_by": "Administrator",
  "module": "FTelephony",
  "name": "TP Smartflow Settings",
