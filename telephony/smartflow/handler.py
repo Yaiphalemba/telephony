@@ -43,7 +43,7 @@ def handle_request(**kwargs):
         if call_log_doc := get_call_log(call_payload):
             call_log_doc = update_call_log(call_payload, call_log=call_log_doc)
         else:
-            # FIX 1: Detect Tata's specific softphone directions
+            # Detect Tata's specific softphone directions
             raw_dir = call_payload.get("direction", "inbound").lower()
             call_type = "Outgoing" if raw_dir in ["outbound", "clicktocall", "click_to_call"] else "Incoming"
 
@@ -51,35 +51,40 @@ def handle_request(**kwargs):
             from_num = call_payload.get("caller_id_number") or call_payload.get("customer_number")
             to_num = call_payload.get("call_to_number") or call_payload.get("display_number")
             
-            # Find the Agent dynamically based on direction!
+            # Find the Agent dynamically based on direction
             agent_num = call_payload.get("agent_number")
-            
-            # FIX 2: Hunt for nested agent numbers in outbound softphone payloads
             if not agent_num and isinstance(call_payload.get("answered_agent"), dict):
                 agent_num = call_payload["answered_agent"].get("agent_number")
-            
             if not agent_num and isinstance(call_payload.get("answered_agent_number"), dict):
                 agent_num = call_payload["answered_agent_number"].get("follow_me_number")
 
             if not agent_num:
-                # Fallback: lookup by virtual number mapped to the agent
                 lookup_num = from_num if call_type == "Outgoing" else to_num
                 agent_user = frappe.db.get_value("TP Telephony Agent", {"smartflow_number": lookup_num}, "user")
                 if agent_user:
                     agent_num = agent_user 
 
-            call_log_doc = create_call_log(
-                call_id=call_payload.get("call_id"),
-                from_number=from_num,
-                to_number=to_num,
-                medium="Smartflow",
-                status=get_call_log_status(call_payload),
-                agent=agent_num,
-                call_type=call_type  # Routes it correctly!
-            )
+            # RACE CONDITION ARMOR: Catch concurrent duplicate insert attempts gracefully
+            try:
+                call_log_doc = create_call_log(
+                    call_id=call_payload.get("call_id"),
+                    from_number=from_num,
+                    to_number=to_num,
+                    medium="Smartflow",
+                    status=get_call_log_status(call_payload),
+                    agent=agent_num,
+                    call_type=call_type
+                )
+            except frappe.DuplicateEntryError:
+                # The parallel webhook thread beat us to the insert! 
+                # Bypass creation, fetch their fresh record, and update it with our hangup data.
+                frappe.db.rollback() # Clear the failed insert state
+                call_log_doc = get_call_log(call_payload)
+                if call_log_doc:
+                    call_log_doc = update_call_log(call_payload, call_log=call_log_doc)
 
-            # Map the Start Time immediately
-            if start_stamp := call_payload.get("start_stamp"):
+            # Map the Start Time immediately if we have a valid doc
+            if call_log_doc and (start_stamp := call_payload.get("start_stamp")):
                 call_log_doc.start_time = start_stamp
                 call_log_doc.save(ignore_permissions=True)
                 frappe.db.commit()
@@ -223,17 +228,28 @@ def create_call_log(call_id, from_number, to_number, medium, agent, status="Ring
     call_log.telephony_medium = "Smartflow"
     setattr(call_log, "from", from_number)
 
-    # We assign the agent depending on the direction of the call
-    if call_type == "Incoming":
-        # Resolve user by mobile number if agent is just a phone string
-        if agent and "@" not in agent:
-            user = frappe.db.get_value("TP Telephony Agent", {"mobile_no": agent}, "user")
-            call_log.receiver = user or agent
-        else:
-            call_log.receiver = agent
-    else:
-        call_log.caller = agent
+    # 🚨 THE FIX: Safely translate the phone number to a Frappe User Email for ALL calls
+    resolved_user = agent
+    if agent and "@" not in agent:
+        # Try finding the agent by mobile number
+        resolved_user = frappe.db.get_value("TP Telephony Agent", {"mobile_no": agent}, "user")
+        
+        # Fallback to smartflow number if mobile number didn't match
+        if not resolved_user:
+            resolved_user = frappe.db.get_value("TP Telephony Agent", {"smartflow_number": agent}, "user")
+            
+    # If we STILL couldn't find an email, prevent the DB crash by leaving it blank
+    if resolved_user and "@" not in resolved_user:
+        frappe.logger("telephony").warning(f"Smartflow Webhook: No User found mapped to number {agent}")
+        resolved_user = None
 
+    # Assign to the correct field based on direction
+    if call_type == "Incoming":
+        call_log.receiver = resolved_user
+    else:
+        call_log.caller = resolved_user
+
+    # Link the contact
     contact_number = from_number if call_type == "Incoming" else to_number
     link_call_with_contact(contact_number, call_log)
 
