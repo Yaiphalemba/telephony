@@ -11,10 +11,12 @@ from telephony.utils import (
 def is_call_integration_enabled():
     twilio_enabled = frappe.db.get_single_value("TP Twilio Settings", "enabled")
     exotel_enabled = frappe.db.get_single_value("TP Exotel Settings", "enabled")
+    smartflow_enabled = frappe.db.get_single_value("TP Smartflow Settings", "enabled")
 
     return {
         "twilio_enabled": twilio_enabled,
         "exotel_enabled": exotel_enabled,
+        "smartflow_enabled": smartflow_enabled,
         "default_calling_medium": get_user_default_calling_medium(),
     }
 

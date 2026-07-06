@@ -17,7 +17,10 @@
   "call_receiving_device",
   "column_break_zgsa",
   "exotel",
-  "exotel_number"
+  "exotel_number",
+  "column_break_ygsa",
+  "smartflow",
+  "smartflow_number"
  ],
  "fields": [
   {
@@ -53,7 +56,7 @@
    "fieldname": "default_medium",
    "fieldtype": "Select",
    "label": "Default Medium",
-   "options": "\nTwilio\nExotel"
+   "options": "\nTwilio\nExotel\nSmartflow"
   },
   {
    "fieldname": "section_break_riia",
@@ -94,6 +97,22 @@
    "fieldname": "exotel_number",
    "fieldtype": "Data",
    "label": "Exotel Number"
+  },
+  {
+   "fieldname": "column_break_ygsa",
+   "fieldtype": "Column Break"
+  },
+  {
+   "default": "0",
+   "fieldname": "smartflow",
+   "fieldtype": "Check",
+   "label": "Smartflow"
+  },
+  {
+   "depends_on": "smartflow",
+   "fieldname": "smartflow_number",
+   "fieldtype": "Data",
+   "label": "Smartflow Number"
   }
  ],
  "grid_page_length": 50,
