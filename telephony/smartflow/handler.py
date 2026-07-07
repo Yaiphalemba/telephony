@@ -168,11 +168,18 @@ def make_a_call(to_number, from_number=None, caller_id=None, link_doctype=None, 
     }
 
     try:
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=10)
+        # Changed timeout to 30 seconds to account for Tata's backend lag
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
+        
+    except requests.exceptions.ReadTimeout:
+        # If Tata takes longer than 30 seconds, don't crash the UI. 
+        # Assume the call is bridging and return a safe fallback.
+        frappe.logger("telephony").warning("Smartflow Click-to-Call API timed out, but call may still bridge.")
+        return {"call_id": "Delayed API Response", "message": "Call initiated..."}
+        
     except requests.exceptions.HTTPError:
         if exc := response.json().get("message") or response.json().get("error"):
-            # Bleach it just in case the vendor sends back weird HTML inside the error message
             frappe.throw(bleach.linkify(str(exc)), title=_("Smartflow Exception"))
         frappe.throw(_("Failed to connect the call via Tata Smartflow."))
     else:
