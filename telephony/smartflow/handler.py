@@ -267,11 +267,27 @@ def get_call_log(call_payload):
         return frappe.get_doc("TP Call Log", call_log_id)
 
 
-def get_call_log_status(call_payload, direction="inbound"):
-    status = call_payload.get("status") or call_payload.get("call_status", "")
-    
-    status_map = {
-        "completed": "Completed",
+def get_call_log_status(call_payload):
+    status = (call_payload.get("call_status") or call_payload.get("status") or "").lower()
+
+    is_terminal_event = bool(
+        call_payload.get("hangup_cause_code")
+        or call_payload.get("end_stamp")
+    )
+
+    if is_terminal_event:
+        terminal_map = {
+            "answered": "Completed",
+            "missed": "No Answer",
+        }
+        # hangup event — if hangup_cause_code says normal clearing, treat as Completed
+        if status:
+            return terminal_map.get(status, "Completed")
+        return "Completed" if call_payload.get("hangup_cause_key") == "NORMAL_CLEARING" else "No Answer"
+
+    # kept for safety, in case you ever add a live "Call Answered by Agent"
+    # (non-hangup) webhook trigger later
+    live_map = {
         "answered": "In Progress",
         "in-progress": "In Progress",
         "dialing": "Ringing",
@@ -279,30 +295,25 @@ def get_call_log_status(call_payload, direction="inbound"):
         "busy": "Busy",
         "no-answer": "No Answer",
         "failed": "Failed",
-        "canceled": "Canceled"
+        "canceled": "Canceled",
     }
-    return status_map.get(status.lower(), "Initiated")
+    return live_map.get(status, "Initiated")
 
 
-def update_call_log(call_payload, status="Ringing", call_log=None):
-    direction = call_payload.get("direction", "incoming")
+def update_call_log(call_payload, call_log=None):
     call_log = call_log or get_call_log(call_payload)
-    status = get_call_log_status(call_payload, direction)
-    
+    status = get_call_log_status(call_payload)
+
     try:
         if call_log:
             call_log.status = status
-            
-            # Duration mapping
-            duration = call_payload.get("duration") or call_payload.get("conversation_duration") or 0
-            call_log.duration = frappe.utils.cint(duration)
-            
+            call_log.duration = frappe.utils.cint(call_payload.get("duration") or call_payload.get("billsec") or 0)
             call_log.recording_url = call_payload.get("recording_url", "")
-            
-            if start_time := call_payload.get("start_time"):
-                call_log.start_time = start_time
-            if end_time := call_payload.get("end_time"):
-                call_log.end_time = end_time
+
+            if start_stamp := call_payload.get("start_stamp"):
+                call_log.start_time = start_stamp
+            if end_stamp := call_payload.get("end_stamp"):
+                call_log.end_time = end_stamp
 
             call_log.save(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep
