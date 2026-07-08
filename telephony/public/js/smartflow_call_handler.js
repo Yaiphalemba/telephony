@@ -158,9 +158,16 @@ $(document).on('app_ready', function() {
         });
 });
 
+// 🚨 Hoist the active call state to the global window object so it survives modal closures!
+window.smartflow_active_call_id = window.smartflow_active_call_id || null;
+
 window.open_manual_dialer = function() {
     let history_offset = 0;
     let contacts_offset = 0;
+    let history_search_term = '';
+    let contacts_search_term = '';
+    let h_timer;
+    let c_timer;
 
     let dialer_dialog = new frappe.ui.Dialog({
         title: __('Smartflow Dialer'),
@@ -191,14 +198,16 @@ window.open_manual_dialer = function() {
                         
                         <!-- 2. HISTORY TAB -->
                         <div class="dialer-tab-content" id="tab-history" style="display: none;">
-                            <ul id="history_list" style="list-style: none; padding: 0; margin: 0; max-height: 280px; overflow-y: auto;"></ul>
+                            <input type="text" class="form-control form-control-sm mb-2" id="search_history" placeholder="Search number or status...">
+                            <ul id="history_list" style="list-style: none; padding: 0; margin: 0; max-height: 250px; overflow-y: auto;"></ul>
                             <button class="btn btn-xs btn-default w-100 mt-2" id="btn_load_more_history" style="display: none;">Load More</button>
                         </div>
                         
                         <!-- 3. CONTACTS TAB -->
                         <div class="dialer-tab-content" id="tab-contacts" style="display: none;">
+                            <input type="text" class="form-control form-control-sm mb-2" id="search_contacts" placeholder="Search name or number...">
                             <div class="mb-2 text-muted" style="font-size: 11px; text-align: right;">Showing contacts with valid numbers</div>
-                            <ul id="contacts_list" style="list-style: none; padding: 0; margin: 0; max-height: 250px; overflow-y: auto;"></ul>
+                            <ul id="contacts_list" style="list-style: none; padding: 0; margin: 0; max-height: 220px; overflow-y: auto;"></ul>
                             <button class="btn btn-xs btn-default w-100 mt-2" id="btn_load_more_contacts" style="display: none;">Load More</button>
                         </div>
                     </div>
@@ -207,11 +216,19 @@ window.open_manual_dialer = function() {
         ]
     });
     
-    // Hide standard bottom Frappe actions to make it look like a sleek widget
     dialer_dialog.get_primary_btn().parent().hide(); 
     dialer_dialog.show();
 
     let $wrapper = dialer_dialog.$wrapper;
+
+    // ==========================================
+    // STATE RECOVERY (The Magic Sauce)
+    // ==========================================
+    if (window.smartflow_active_call_id) {
+        $wrapper.find('#btn_trigger_call').prop('disabled', true);
+        $wrapper.find('#dialer_status').html('<span style="color: #f39c12;">Recovering active call session...</span>');
+        start_call_polling(window.smartflow_active_call_id);
+    }
 
     // ==========================================
     // UI ROUTING (TAB SWITCHING)
@@ -224,14 +241,56 @@ window.open_manual_dialer = function() {
         $wrapper.find('.dialer-tab-content').hide();
         $wrapper.find('#tab-' + target).fadeIn(150);
         
-        // Lazy load the data so we don't bombard the database on open
-        if (target === 'history' && history_offset === 0) load_history();
-        if (target === 'contacts' && contacts_offset === 0) load_contacts();
+        if (target === 'history' && history_offset === 0 && !history_search_term) load_history();
+        if (target === 'contacts' && contacts_offset === 0 && !contacts_search_term) load_contacts();
     });
 
     // ==========================================
-    // CORE CALLING LOGIC
+    // SEARCH EVENT LISTENERS
     // ==========================================
+    $wrapper.find('#search_history').on('input', function() {
+        clearTimeout(h_timer);
+        history_search_term = $(this).val().trim();
+        history_offset = 0;
+        h_timer = setTimeout(() => load_history(), 300);
+    });
+
+    $wrapper.find('#search_contacts').on('input', function() {
+        clearTimeout(c_timer);
+        contacts_search_term = $(this).val().trim();
+        contacts_offset = 0;
+        c_timer = setTimeout(() => load_contacts(), 300);
+    });
+
+    // ==========================================
+    // CORE CALLING & POLLING LOGIC
+    // ==========================================
+    function start_call_polling(call_id) {
+        window.smartflow_active_call_id = call_id;
+        
+        let status_interval = setInterval(() => {
+            frappe.db.get_value('TP Call Log', call_id, 'status')
+            .then(r => {
+                if (r.message && r.message.status) {
+                    let current_status = r.message.status;
+                    $wrapper.find('#dialer_status').html(`<span style="color: #3498db;">Live Status: ${current_status}</span>`);
+                    
+                    if (['Completed', 'Failed', 'Busy', 'No Answer', 'Canceled', 'Missed'].includes(current_status)) {
+                        clearInterval(status_interval);
+                        window.smartflow_active_call_id = null; // 🚨 Call is dead, clear the global state!
+                        
+                        $wrapper.find('#dialer_status').append('<br><br><span style="color: #27ae60; font-weight: bold;">Call Finished.</span>');
+                        $wrapper.find('#btn_trigger_call').prop('disabled', false); 
+                        history_offset = 0; 
+                    }
+                }
+            });
+        }, 1500); 
+        
+        // Kill the interval loop if the modal closes, but KEEP the global call_id intact
+        dialer_dialog.$wrapper.on('hidden.bs.modal', () => clearInterval(status_interval));
+    }
+
     $wrapper.find('#btn_trigger_call').on('click', function() {
         let to_number = $wrapper.find('#manual_dial_number').val().trim();
         if (!to_number) {
@@ -249,26 +308,7 @@ window.open_manual_dialer = function() {
             
             let call_id = res.CallSid || res.call_id || (res.data ? res.data.call_id : null);
             if (call_id) {
-                let status_interval = setInterval(() => {
-                    frappe.db.get_value('TP Call Log', call_id, 'status')
-                    .then(r => {
-                        if (r.message && r.message.status) {
-                            let current_status = r.message.status;
-                            $wrapper.find('#dialer_status').html(`<span style="color: #3498db;">Live Status: ${current_status}</span>`);
-                            
-                            if (['Completed', 'Failed', 'Busy', 'No Answer', 'Canceled', 'Missed'].includes(current_status)) {
-                                clearInterval(status_interval);
-                                $wrapper.find('#dialer_status').append('<br><br><span style="color: #27ae60; font-weight: bold;">Call Finished.</span>');
-                                $wrapper.find('#btn_trigger_call').prop('disabled', false); 
-                                
-                                // Reset history so next time they open the tab, it shows this call
-                                history_offset = 0; 
-                            }
-                        }
-                    });
-                }, 1500); 
-                
-                dialer_dialog.$wrapper.on('hidden.bs.modal', () => clearInterval(status_interval));
+                start_call_polling(call_id);
             }
         }).catch(e => {
             $wrapper.find('#btn_trigger_call').prop('disabled', false);
@@ -277,44 +317,52 @@ window.open_manual_dialer = function() {
     });
 
     // ==========================================
-    // HISTORY DATA LOADER (INBOUND & OUTBOUND)
+    // HISTORY DATA LOADER 
     // ==========================================
     function load_history(append = false) {
         if (!append) $wrapper.find('#history_list').html('<li class="text-muted text-center py-3">Loading History...</li>');
         
+        let args = {
+            doctype: 'TP Call Log',
+            fields: ['name', 'to', 'from', 'status', 'creation', 'type', 'caller', 'receiver'],
+            limit_page_length: history_search_term ? 100 : 20, 
+            limit_start: history_offset,
+            order_by: 'creation desc'
+        };
+
+        if (history_search_term) {
+            args.or_filters = [
+                ['to', 'like', `%${history_search_term}%`],
+                ['from', 'like', `%${history_search_term}%`],
+                ['status', 'like', `%${history_search_term}%`]
+            ];
+        } else {
+            args.or_filters = [
+                ['caller', '=', frappe.session.user],
+                ['receiver', '=', frappe.session.user]
+            ];
+        }
+
         frappe.call({
             method: 'frappe.client.get_list',
-            args: {
-                doctype: 'TP Call Log',
-                fields: ['name', 'to', 'from', 'status', 'creation', 'type'],
-                or_filters: [
-                    ['caller', '=', frappe.session.user],
-                    ['receiver', '=', frappe.session.user]
-                ],
-                limit_page_length: 20,
-                limit_start: history_offset,
-                order_by: 'creation desc'
-            },
+            args: args,
             callback: function(r) {
-                let records = r.message || [];
+                let raw_records = r.message || [];
+                let records = history_search_term 
+                    ? raw_records.filter(c => c.caller === frappe.session.user || c.receiver === frappe.session.user)
+                    : raw_records;
+
                 let html = '';
-                
                 if (records.length === 0 && !append) {
-                    html = '<li class="text-muted text-center py-3">No recent calls found.</li>';
+                    html = '<li class="text-muted text-center py-3">No matching calls found.</li>';
                     $wrapper.find('#btn_load_more_history').hide();
                 } else {
                     records.forEach(r => {
-                        // Determine the direction to format the UI properly
                         let is_incoming = r.type === 'Incoming';
-                        
-                        // If it's incoming, the customer's number is 'from'. If outgoing, it's 'to'.
                         let customer_num = is_incoming ? r.from : r.to;
-                        
-                        // Sleek UI badges for direction
                         let type_badge = is_incoming 
                             ? '<span style="color: #27ae60; border: 1px solid #27ae60; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-right: 5px;">IN</span>'
                             : '<span style="color: #3498db; border: 1px solid #3498db; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-right: 5px;">OUT</span>';
-                            
                         let color = ['Completed', 'In Progress'].includes(r.status) ? 'green' : (r.status === 'Failed' ? 'red' : 'orange');
                         
                         html += `
@@ -334,10 +382,8 @@ window.open_manual_dialer = function() {
                             </li>
                         `;
                     });
-                    
-                    records.length < 20 ? $wrapper.find('#btn_load_more_history').hide() : $wrapper.find('#btn_load_more_history').show();
+                    records.length < (history_search_term ? 100 : 20) ? $wrapper.find('#btn_load_more_history').hide() : $wrapper.find('#btn_load_more_history').show();
                 }
-                
                 append ? $wrapper.find('#history_list').append(html) : $wrapper.find('#history_list').html(html);
             }
         });
@@ -349,30 +395,47 @@ window.open_manual_dialer = function() {
     function load_contacts(append = false) {
         if (!append) $wrapper.find('#contacts_list').html('<li class="text-muted text-center py-3">Loading Contacts...</li>');
         
+        let args = {
+            doctype: 'Contact',
+            fields: ['name', 'first_name', 'last_name', 'phone', 'mobile_no'],
+            limit_page_length: 20,
+            limit_start: contacts_offset,
+            order_by: 'creation desc'
+        };
+
+        if (contacts_search_term) {
+            args.or_filters = [
+                ['name', 'like', `%${contacts_search_term}%`],
+                ['first_name', 'like', `%${contacts_search_term}%`],
+                ['last_name', 'like', `%${contacts_search_term}%`],
+                ['phone', 'like', `%${contacts_search_term}%`],
+                ['mobile_no', 'like', `%${contacts_search_term}%`]
+            ];
+        } else {
+            args.or_filters = [
+                ['phone', 'is', 'set'],
+                ['mobile_no', 'is', 'set']
+            ];
+        }
+
         frappe.call({
             method: 'frappe.client.get_list',
-            args: {
-                doctype: 'Contact',
-                fields: ['name', 'first_name', 'last_name', 'phone', 'mobile_no'],
-                or_filters: [
-                    ['phone', 'is', 'set'],
-                    ['mobile_no', 'is', 'set']
-                ],
-                limit_page_length: 20,
-                limit_start: contacts_offset,
-                order_by: 'creation desc'
-            },
+            args: args,
             callback: function(r) {
                 let records = r.message || [];
                 let html = '';
+                let valid_count = 0;
                 
                 if (records.length === 0 && !append) {
-                    html = '<li class="text-muted text-center py-3">No contacts with phone numbers found.</li>';
+                    html = '<li class="text-muted text-center py-3">No matching contacts found.</li>';
                     $wrapper.find('#btn_load_more_contacts').hide();
                 } else {
                     records.forEach(c => {
                         let full_name = $.trim(`${c.first_name || ''} ${c.last_name || ''}`);
                         let phone_to_show = c.mobile_no || c.phone; 
+                        
+                        if (!phone_to_show) return;
+                        valid_count++;
                         
                         html += `
                             <li style="padding: 10px 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
@@ -387,9 +450,11 @@ window.open_manual_dialer = function() {
                         `;
                     });
                     
+                    if (valid_count === 0 && !append) {
+                        html = '<li class="text-muted text-center py-3">No matching contacts with phone numbers found.</li>';
+                    }
                     records.length < 20 ? $wrapper.find('#btn_load_more_contacts').hide() : $wrapper.find('#btn_load_more_contacts').show();
                 }
-                
                 append ? $wrapper.find('#contacts_list').append(html) : $wrapper.find('#contacts_list').html(html);
             }
         });
@@ -399,7 +464,7 @@ window.open_manual_dialer = function() {
     // EVENT BINDINGS
     // ==========================================
     $wrapper.find('#btn_load_more_history').on('click', function() {
-        history_offset += 20;
+        history_offset += (history_search_term ? 100 : 20);
         load_history(true);
     });
 
@@ -408,15 +473,10 @@ window.open_manual_dialer = function() {
         load_contacts(true);
     });
 
-    // Auto-fill the Dialpad when they click "Call" from History or Contacts
     $wrapper.on('click', '.btn-fill-dialer', function() {
         let num = $(this).attr('data-num');
         $wrapper.find('#manual_dial_number').val(num);
-        
-        // Jump back to the dialpad tab
         $wrapper.find('.nav-link[data-tab="dialpad"]').click();
-        
-        // Sexy little flash animation to prove it copied
         $wrapper.find('#manual_dial_number').fadeOut(100).fadeIn(100).focus();
     });
 
