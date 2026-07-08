@@ -1,130 +1,130 @@
 frappe.provide('frappe.phone_call');
 
 class SmartflowCallHandler {
-	constructor(to_number, frm) {
-		// Handles string or array inputs[cite: 9]
-		this.to_numbers = Array.isArray(to_number) ? to_number : to_number.split('\n');
-		
-		if (frm) {
-			this.document_to_link = {
-				'link_doctype': frm.doctype,
-				'link_name': frm.docname
-			};
-		}
-		this.make();
-	}
+    constructor(to_number, frm) {
+        // Handles string or array inputs[cite: 1]
+        this.to_numbers = Array.isArray(to_number) ? to_number : to_number.split('\n');
+        
+        if (frm) {
+            this.document_to_link = {
+                'link_doctype': frm.doctype,
+                'link_name': frm.docname
+            };
+        }
+        this.make();
+    }
 
-	make() {
-		this.dialog = new frappe.ui.Dialog({
-			'static': 1,
-			'title': __('Make a Call via Smartflow'),
-			'minimizable': true,
-			'fields': [
-				{
-					'fieldname': 'to_number',
-					'label': 'To Number',
-					'fieldtype': 'Autocomplete',
-					'default': this.to_numbers[0],
-					'ignore_validation': true,
-					'options': this.to_numbers,
-					'read_only': 0,
-					'reqd': 1
-				}, 
-				{
-					'label': 'API Response',
-					'fieldtype': 'Section Break',
-					'collapsible': 1
-				}, 
-				{
-					'fieldname': 'response',
-					'label': 'System Logs',
-					'fieldtype': 'Code',
-					'read_only': 1
-				}
-			],
-			primary_action: () => {
-				this.dialog.disable_primary_action();
-				
-				// Fire the backend Python script we wrote earlier!
-				frappe.xcall('telephony.smartflow.handler.make_a_call', {
-					'to_number': this.dialog.get_value('to_number'),
-					'link_doctype': this.document_to_link ? this.document_to_link.link_doctype : null,
-					'link_docname': this.document_to_link ? this.document_to_link.link_docname : null
-				}).then(res => {
-					this.dialog.get_close_btn().hide();
-					this.dialog.set_value('response', JSON.stringify(res, null, 2));
-					
-					// Grab the Call ID returned from Tata Smartflow
-					this.call_id = res.CallSid || res.call_id; 
-					this.setup_call_status_updater();
-					
-				}).catch(e => {
-					this.dialog.enable_primary_action();
-					this.dialog.set_value('response', JSON.stringify(e, null, 2));
-				});
-			},
-			primary_action_label: __('Dial Customer')
-		});
-		
-		this.dialog.show();
-		this.dialog.get_close_btn().show();
-	}
+    make() {
+        this.dialog = new frappe.ui.Dialog({
+            'static': 1,
+            'title': __('Make a Call via Smartflow'),
+            'minimizable': true,
+            'fields': [
+                {
+                    'fieldname': 'to_number',
+                    'label': 'To Number',
+                    'fieldtype': 'Autocomplete',
+                    'default': this.to_numbers[0],
+                    'ignore_validation': true,
+                    'options': this.to_numbers,
+                    'read_only': 0,
+                    'reqd': 1
+                }, 
+                {
+                    'label': 'API Response',
+                    'fieldtype': 'Section Break',
+                    'collapsible': 1
+                }, 
+                {
+                    'fieldname': 'response',
+                    'label': 'System Logs',
+                    'fieldtype': 'Code',
+                    'read_only': 1
+                }
+            ],
+            primary_action: () => {
+                this.dialog.disable_primary_action();
+                
+                // Fire the backend Python script we wrote earlier!
+                frappe.xcall('telephony.smartflow.handler.make_a_call', {
+                    'to_number': this.dialog.get_value('to_number'),
+                    'link_doctype': this.document_to_link ? this.document_to_link.link_doctype : null,
+                    'link_docname': this.document_to_link ? this.document_to_link.link_docname : null
+                }).then(res => {
+                    this.dialog.get_close_btn().hide();
+                    this.dialog.set_value('response', JSON.stringify(res, null, 2));
+                    
+                    // Grab the Call ID returned from Tata Smartflow
+                    this.call_id = res.CallSid || res.call_id; 
+                    this.setup_call_status_updater();
+                    
+                }).catch(e => {
+                    this.dialog.enable_primary_action();
+                    this.dialog.set_value('response', JSON.stringify(e, null, 2));
+                });
+            },
+            primary_action_label: __('Dial Customer')
+        });
+        
+        this.dialog.show();
+        this.dialog.get_close_btn().show();
+    }
 
-	setup_call_status_updater() {
-		if (!this.updater) {
-			// Poll the local database every 1.5 seconds instead of hitting Tata's API
-			this.updater = setInterval(this.set_call_status.bind(this), 1500);
-		}
-	}
+    setup_call_status_updater() {
+        if (!this.updater) {
+            // Poll the local database every 1.5 seconds instead of hitting Tata's API
+            this.updater = setInterval(this.set_call_status.bind(this), 1500);
+        }
+    }
 
-	set_call_status() {
-		frappe.db.get_value('TP Call Log', this.call_id, 'status')
-		.then(r => {
-			if (r.message && r.message.status) {
-				let status = r.message.status;
-				this.set_header(status);
-				
-				// Stop checking if the call hits a terminal state
-				if (['Completed', 'Failed', 'Busy', 'No Answer', 'Canceled', 'Missed'].includes(status)) {
-					this.set_call_as_complete();
-				}
-			}
-		}).catch(e => {
-			console.log("Status Fetch Error:", e);
-			this.set_call_as_complete();
-		});
-	}
+    set_call_status() {
+        frappe.db.get_value('TP Call Log', this.call_id, 'status')
+        .then(r => {
+            if (r.message && r.message.status) {
+                let status = r.message.status;
+                this.set_header(status);
+                
+                // Stop checking if the call hits a terminal state
+                if (['Completed', 'Failed', 'Busy', 'No Answer', 'Canceled', 'Missed'].includes(status)) {
+                    this.set_call_as_complete();
+                }
+            }
+        }).catch(e => {
+            console.log("Status Fetch Error:", e);
+            this.set_call_as_complete();
+        });
+    }
 
-	set_call_as_complete() {
-		this.dialog.get_close_btn().show();
-		clearInterval(this.updater);
-	}
+    set_call_as_complete() {
+        this.dialog.get_close_btn().show();
+        clearInterval(this.updater);
+    }
 
-	set_header(status) {
-		this.dialog.set_title(frappe.model.unscrub(status));
-		const indicator_class = this.get_status_indicator(status);
-		this.dialog.header.find('.indicator').attr('class', `indicator ${indicator_class}`);
-	}
+    set_header(status) {
+        this.dialog.set_title(frappe.model.unscrub(status));
+        const indicator_class = this.get_status_indicator(status);
+        this.dialog.header.find('.indicator').attr('class', `indicator ${indicator_class}`);
+    }
 
-	get_status_indicator(status) {
-		const indicator_map = {
-			'Completed': 'blue',
-			'Failed': 'red',
-			'Busy': 'yellow',
-			'No Answer': 'orange',
-			'Initiated': 'orange',
-			'Ringing': 'green blink',
-			'In Progress': 'green blink'
-		};
-		return indicator_map[status] || 'blue blink';
-	}
+    get_status_indicator(status) {
+        const indicator_map = {
+            'Completed': 'blue',
+            'Failed': 'red',
+            'Busy': 'yellow',
+            'No Answer': 'orange',
+            'Initiated': 'orange',
+            'Ringing': 'green blink',
+            'In Progress': 'green blink'
+        };
+        return indicator_map[status] || 'blue blink';
+    }
 }
 
-// Check if Smartflow is enabled, then override the default Frappe click-to-call UI[cite: 9]
+// Check if Smartflow is enabled, then override the default Frappe click-to-call UI[cite: 1]
 frappe.xcall('telephony.smartflow.handler.is_integration_enabled').then(is_integration_enabled => {
-	if (is_integration_enabled) {
-		frappe.phone_call.handler = (to_number, frm) => new SmartflowCallHandler(to_number, frm);
-	}
+    if (is_integration_enabled) {
+        frappe.phone_call.handler = (to_number, frm) => new SmartflowCallHandler(to_number, frm);
+    }
 });
 
 
@@ -158,7 +158,8 @@ $(document).on('app_ready', function() {
         });
 });
 
-// 🚨 Hoist the active call state to the global window object so it survives modal closures!
+// Hoist the cache so we don't query the database repeatedly for the same numbers
+window.smartflow_contact_cache = window.smartflow_contact_cache || {};
 window.smartflow_active_call_id = window.smartflow_active_call_id || null;
 
 window.open_manual_dialer = function() {
@@ -169,7 +170,7 @@ window.open_manual_dialer = function() {
     let h_timer;
     let c_timer;
 
-    let dialer_dialog = new frappe.ui.Dialog({
+    window.smartflow_dialer_dialog = new frappe.ui.Dialog({
         title: __('Smartflow Dialer'),
         fields: [
             {
@@ -188,7 +189,9 @@ window.open_manual_dialer = function() {
                         <div class="dialer-tab-content active" id="tab-dialpad">
                             <div class="form-group">
                                 <label class="text-muted" style="font-size: 12px;">Enter Phone Number</label>
-                                <input type="text" class="form-control" id="manual_dial_number" placeholder="e.g. 919876543210" style="margin-bottom: 15px; font-size: 16px; padding: 10px;">
+                                <input type="text" class="form-control" id="manual_dial_number" placeholder="e.g. 919876543210" style="margin-bottom: 5px; font-size: 16px; padding: 10px;">
+                                <!-- NEW: Dedicated space to show the Contact's Name during a call -->
+                                <div id="active_contact_name" class="text-primary mb-2" style="font-size: 13px; text-align: center; font-weight: 600; min-height: 20px;"></div>
                             </div>
                             <button class="btn btn-primary w-100" id="btn_trigger_call" style="margin-bottom: 10px; padding: 8px;">
                                 <svg class="icon icon-sm"><use href="#icon-call"></use></svg> Dial Number
@@ -216,18 +219,107 @@ window.open_manual_dialer = function() {
         ]
     });
     
+    let dialer_dialog = window.smartflow_dialer_dialog;
     dialer_dialog.get_primary_btn().parent().hide(); 
     dialer_dialog.show();
 
     let $wrapper = dialer_dialog.$wrapper;
 
     // ==========================================
-    // STATE RECOVERY (The Magic Sauce)
+    // THE SMART CONTACT CACHE
     // ==========================================
-    if (window.smartflow_active_call_id) {
+    function resolve_contacts(numbers_array, callback) {
+        let unique_nums = [...new Set(numbers_array.filter(Boolean))];
+        let missing_nums = unique_nums.filter(n => window.smartflow_contact_cache[n] === undefined);
+
+        if (missing_nums.length === 0) {
+            return callback();
+        }
+
+        frappe.call({
+            method: 'frappe.client.get_list',
+            args: {
+                doctype: 'Contact',
+                fields: ['name', 'first_name', 'last_name', 'phone', 'mobile_no'],
+                or_filters: [
+                    ['phone', 'in', missing_nums],
+                    ['mobile_no', 'in', missing_nums]
+                ]
+            },
+            callback: function(r) {
+                let contacts = r.message || [];
+                
+                // Mark all searched numbers as null first so we don't repeatedly search unknowns
+                missing_nums.forEach(m => window.smartflow_contact_cache[m] = null);
+                
+                contacts.forEach(c => {
+                    let full_name = $.trim(`${c.first_name || ''} ${c.last_name || ''}`) || c.name;
+                    if (c.phone) window.smartflow_contact_cache[c.phone] = full_name;
+                    if (c.mobile_no) window.smartflow_contact_cache[c.mobile_no] = full_name;
+                });
+                
+                callback();
+            }
+        });
+    }
+
+    // ==========================================
+    // STATE RECOVERY (With Names!)
+    // ==========================================
+    function resume_active_call(call_id, known_number = null) {
         $wrapper.find('#btn_trigger_call').prop('disabled', true);
-        $wrapper.find('#dialer_status').html('<span style="color: #f39c12;">Recovering active call session...</span>');
-        start_call_polling(window.smartflow_active_call_id);
+        $wrapper.find('#dialer_status').html('<span style="color: #f39c12;">Tracking active call session...</span>');
+        
+        let populate_and_resolve = (num) => {
+            $wrapper.find('#manual_dial_number').val(num);
+            resolve_contacts([num], () => {
+                let name = window.smartflow_contact_cache[num];
+                if (name) {
+                    $wrapper.find('#active_contact_name').html(`<svg class="icon icon-sm"><use href="#icon-user"></use></svg> ${name}`);
+                }
+            });
+        };
+
+        if (known_number) {
+            populate_and_resolve(known_number);
+        } else {
+            frappe.db.get_value('TP Call Log', call_id, ['to', 'from', 'type'])
+            .then(r => {
+                if (r.message) {
+                    let customer_num = r.message.type === 'Incoming' ? r.message.from : r.message.to;
+                    if (customer_num) populate_and_resolve(customer_num);
+                }
+            });
+        }
+        
+        start_call_polling(call_id);
+    }
+
+    if (window.smartflow_active_call_id) {
+        resume_active_call(window.smartflow_active_call_id);
+    } else {
+        frappe.call({
+            method: 'frappe.client.get_list',
+            args: {
+                doctype: 'TP Call Log',
+                fields: ['name', 'to', 'from', 'type', 'status'],
+                or_filters: [
+                    ['caller', '=', frappe.session.user],
+                    ['receiver', '=', frappe.session.user]
+                ],
+                limit_page_length: 1,
+                order_by: 'creation desc'
+            },
+            callback: function(r) {
+                if (r.message && r.message.length > 0) {
+                    let latest_call = r.message[0];
+                    if (['Ringing', 'In Progress', 'Initiated'].includes(latest_call.status)) {
+                        let customer_num = latest_call.type === 'Incoming' ? latest_call.from : latest_call.to;
+                        resume_active_call(latest_call.name, customer_num);
+                    }
+                }
+            }
+        });
     }
 
     // ==========================================
@@ -243,6 +335,11 @@ window.open_manual_dialer = function() {
         
         if (target === 'history' && history_offset === 0 && !history_search_term) load_history();
         if (target === 'contacts' && contacts_offset === 0 && !contacts_search_term) load_contacts();
+    });
+
+    // Clear the active name when they type a new number manually
+    $wrapper.find('#manual_dial_number').on('input', function() {
+        $wrapper.find('#active_contact_name').html('');
     });
 
     // ==========================================
@@ -277,7 +374,7 @@ window.open_manual_dialer = function() {
                     
                     if (['Completed', 'Failed', 'Busy', 'No Answer', 'Canceled', 'Missed'].includes(current_status)) {
                         clearInterval(status_interval);
-                        window.smartflow_active_call_id = null; // 🚨 Call is dead, clear the global state!
+                        window.smartflow_active_call_id = null;
                         
                         $wrapper.find('#dialer_status').append('<br><br><span style="color: #27ae60; font-weight: bold;">Call Finished.</span>');
                         $wrapper.find('#btn_trigger_call').prop('disabled', false); 
@@ -287,7 +384,6 @@ window.open_manual_dialer = function() {
             });
         }, 1500); 
         
-        // Kill the interval loop if the modal closes, but KEEP the global call_id intact
         dialer_dialog.$wrapper.on('hidden.bs.modal', () => clearInterval(status_interval));
     }
 
@@ -300,6 +396,14 @@ window.open_manual_dialer = function() {
         
         $(this).prop('disabled', true);
         $wrapper.find('#dialer_status').html('<span style="color: #f39c12;">Ringing your softphone...</span>');
+
+        // Resolve the name on the fly if they typed it manually
+        resolve_contacts([to_number], () => {
+            let name = window.smartflow_contact_cache[to_number];
+            if (name) {
+                $wrapper.find('#active_contact_name').html(`<svg class="icon icon-sm"><use href="#icon-user"></use></svg> ${name}`);
+            }
+        });
 
         frappe.xcall('telephony.smartflow.handler.make_a_call', {
             'to_number': to_number
@@ -317,7 +421,7 @@ window.open_manual_dialer = function() {
     });
 
     // ==========================================
-    // HISTORY DATA LOADER 
+    // HISTORY DATA LOADER (With Names!)
     // ==========================================
     function load_history(append = false) {
         if (!append) $wrapper.find('#history_list').html('<li class="text-muted text-center py-3">Loading History...</li>');
@@ -352,14 +456,27 @@ window.open_manual_dialer = function() {
                     ? raw_records.filter(c => c.caller === frappe.session.user || c.receiver === frappe.session.user)
                     : raw_records;
 
-                let html = '';
                 if (records.length === 0 && !append) {
-                    html = '<li class="text-muted text-center py-3">No matching calls found.</li>';
+                    $wrapper.find('#history_list').html('<li class="text-muted text-center py-3">No matching calls found.</li>');
                     $wrapper.find('#btn_load_more_history').hide();
-                } else {
+                    return;
+                }
+
+                // 🚨 Before rendering HTML, resolve all numbers!
+                let numbers_to_resolve = records.map(r => r.type === 'Incoming' ? r.from : r.to);
+                
+                resolve_contacts(numbers_to_resolve, () => {
+                    let html = '';
+                    
                     records.forEach(r => {
                         let is_incoming = r.type === 'Incoming';
                         let customer_num = is_incoming ? r.from : r.to;
+                        let contact_name = window.smartflow_contact_cache[customer_num];
+                        
+                        let display_title = contact_name 
+                            ? `<span style="font-weight: 600;">${contact_name}</span> <span style="font-size: 11px; color: var(--text-muted);">(${customer_num})</span>`
+                            : `<span style="font-weight: 500;">${customer_num || 'Unknown'}</span>`;
+                        
                         let type_badge = is_incoming 
                             ? '<span style="color: #27ae60; border: 1px solid #27ae60; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-right: 5px;">IN</span>'
                             : '<span style="color: #3498db; border: 1px solid #3498db; padding: 1px 4px; border-radius: 3px; font-size: 9px; margin-right: 5px;">OUT</span>';
@@ -368,8 +485,8 @@ window.open_manual_dialer = function() {
                         html += `
                             <li style="padding: 10px 0; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
                                 <div>
-                                    <div style="font-weight: 500; display: flex; align-items: center;">
-                                        ${type_badge} ${customer_num || 'Unknown'}
+                                    <div style="display: flex; align-items: center;">
+                                        ${type_badge} ${display_title}
                                     </div>
                                     <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
                                         ${frappe.datetime.comment_when(r.creation)}
@@ -382,9 +499,10 @@ window.open_manual_dialer = function() {
                             </li>
                         `;
                     });
+                    
                     records.length < (history_search_term ? 100 : 20) ? $wrapper.find('#btn_load_more_history').hide() : $wrapper.find('#btn_load_more_history').show();
-                }
-                append ? $wrapper.find('#history_list').append(html) : $wrapper.find('#history_list').html(html);
+                    append ? $wrapper.find('#history_list').append(html) : $wrapper.find('#history_list').html(html);
+                });
             }
         });
     }
@@ -476,11 +594,22 @@ window.open_manual_dialer = function() {
     $wrapper.on('click', '.btn-fill-dialer', function() {
         let num = $(this).attr('data-num');
         $wrapper.find('#manual_dial_number').val(num);
+        
+        // Check cache to instantly populate the name space
+        let name = window.smartflow_contact_cache[num];
+        if (name) {
+            $wrapper.find('#active_contact_name').html(`<svg class="icon icon-sm"><use href="#icon-user"></use></svg> ${name}`);
+        } else {
+            $wrapper.find('#active_contact_name').html('');
+        }
+        
         $wrapper.find('.nav-link[data-tab="dialpad"]').click();
         $wrapper.find('#manual_dial_number').fadeOut(100).fadeIn(100).focus();
     });
 
     setTimeout(() => {
-        $wrapper.find('input[id="manual_dial_number"]').focus();
+        if (!window.smartflow_active_call_id) {
+            $wrapper.find('input[id="manual_dial_number"]').focus();
+        }
     }, 300);
 };

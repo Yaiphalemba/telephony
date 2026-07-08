@@ -109,6 +109,15 @@ def handle_request(**kwargs):
             if not target_user:
                 frappe.logger("telephony").warning(f"Smartflow Popup Failed: No Agent mapped to virtual number {call_log_doc.to}")
             
+            # NEW: Trigger the automatic popup for the agent!
+            if call_log_doc.type == "Incoming" and call_log_doc.status in ["Ringing", "Initiated", "In Progress"]:
+                if call_log_doc.receiver: # Make sure we actually know which agent to alert
+                    frappe.publish_realtime(
+                        event="smartflow_incoming_call",
+                        message={"call_id": call_log_doc.name},
+                        user=target_user
+                    )
+                    
             # Broadcast to the socket room based on the call lifecycle
             if internal_status in ["Initiated", "Ringing", "In Progress"]:
                 frappe.publish_realtime("show_call_popup", doc_dict, user=target_user)
