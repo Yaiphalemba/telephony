@@ -109,6 +109,15 @@ def handle_request(**kwargs):
             if not target_user:
                 frappe.logger("telephony").warning(f"Smartflow Popup Failed: No Agent mapped to virtual number {call_log_doc.to}")
             
+            # NEW: Trigger the automatic popup for the agent!
+            if call_log_doc.type == "Incoming" and call_log_doc.status in ["Ringing", "Initiated", "In Progress"]:
+                if call_log_doc.receiver: # Make sure we actually know which agent to alert
+                    frappe.publish_realtime(
+                        event="smartflow_incoming_call",
+                        message={"call_id": call_log_doc.name},
+                        user=target_user
+                    )
+                    
             # Broadcast to the socket room based on the call lifecycle
             if internal_status in ["Initiated", "Ringing", "In Progress"]:
                 frappe.publish_realtime("show_call_popup", doc_dict, user=target_user)
@@ -168,11 +177,18 @@ def make_a_call(to_number, from_number=None, caller_id=None, link_doctype=None, 
     }
 
     try:
-        response = requests.post(endpoint, json=payload, headers=headers, timeout=10)
+        # Changed timeout to 30 seconds to account for Tata's backend lag
+        response = requests.post(endpoint, json=payload, headers=headers, timeout=30)
         response.raise_for_status()
+        
+    except requests.exceptions.ReadTimeout:
+        # If Tata takes longer than 30 seconds, don't crash the UI. 
+        # Assume the call is bridging and return a safe fallback.
+        frappe.logger("telephony").warning("Smartflow Click-to-Call API timed out, but call may still bridge.")
+        return {"call_id": "Delayed API Response", "message": "Call initiated..."}
+        
     except requests.exceptions.HTTPError:
         if exc := response.json().get("message") or response.json().get("error"):
-            # Bleach it just in case the vendor sends back weird HTML inside the error message
             frappe.throw(bleach.linkify(str(exc)), title=_("Smartflow Exception"))
         frappe.throw(_("Failed to connect the call via Tata Smartflow."))
     else:
@@ -267,11 +283,27 @@ def get_call_log(call_payload):
         return frappe.get_doc("TP Call Log", call_log_id)
 
 
-def get_call_log_status(call_payload, direction="inbound"):
-    status = call_payload.get("status") or call_payload.get("call_status", "")
-    
-    status_map = {
-        "completed": "Completed",
+def get_call_log_status(call_payload):
+    status = (call_payload.get("call_status") or call_payload.get("status") or "").lower()
+
+    is_terminal_event = bool(
+        call_payload.get("hangup_cause_code")
+        or call_payload.get("end_stamp")
+    )
+
+    if is_terminal_event:
+        terminal_map = {
+            "answered": "Completed",
+            "missed": "No Answer",
+        }
+        # hangup event — if hangup_cause_code says normal clearing, treat as Completed
+        if status:
+            return terminal_map.get(status, "Completed")
+        return "Completed" if call_payload.get("hangup_cause_key") == "NORMAL_CLEARING" else "No Answer"
+
+    # kept for safety, in case you ever add a live "Call Answered by Agent"
+    # (non-hangup) webhook trigger later
+    live_map = {
         "answered": "In Progress",
         "in-progress": "In Progress",
         "dialing": "Ringing",
@@ -279,30 +311,25 @@ def get_call_log_status(call_payload, direction="inbound"):
         "busy": "Busy",
         "no-answer": "No Answer",
         "failed": "Failed",
-        "canceled": "Canceled"
+        "canceled": "Canceled",
     }
-    return status_map.get(status.lower(), "Initiated")
+    return live_map.get(status, "Initiated")
 
 
-def update_call_log(call_payload, status="Ringing", call_log=None):
-    direction = call_payload.get("direction", "incoming")
+def update_call_log(call_payload, call_log=None):
     call_log = call_log or get_call_log(call_payload)
-    status = get_call_log_status(call_payload, direction)
-    
+    status = get_call_log_status(call_payload)
+
     try:
         if call_log:
             call_log.status = status
-            
-            # Duration mapping
-            duration = call_payload.get("duration") or call_payload.get("conversation_duration") or 0
-            call_log.duration = frappe.utils.cint(duration)
-            
+            call_log.duration = frappe.utils.cint(call_payload.get("duration") or call_payload.get("billsec") or 0)
             call_log.recording_url = call_payload.get("recording_url", "")
-            
-            if start_time := call_payload.get("start_time"):
-                call_log.start_time = start_time
-            if end_time := call_payload.get("end_time"):
-                call_log.end_time = end_time
+
+            if start_stamp := call_payload.get("start_stamp"):
+                call_log.start_time = start_stamp
+            if end_stamp := call_payload.get("end_stamp"):
+                call_log.end_time = end_stamp
 
             call_log.save(ignore_permissions=True)
             frappe.db.commit()  # nosemgrep
