@@ -35,4 +35,4 @@ class TPSmartflowSettings(Document):
         return self.get_password("access_token")
 
 def get_smartflo_settings():
-    return frappe.get_single("Smartflo Settings")
+    return frappe.get_single("TP Smartflow Settings")

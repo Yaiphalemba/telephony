@@ -151,6 +151,18 @@ $(document).on('app_ready', function() {
                 } else {
                     $('.navbar-right').prepend($dialer_btn); // Fallback
                 }
+                // // Catch the custom event you broadcasted from Python
+                // frappe.realtime.on('smartflow_incoming_call', function(data) {
+                //     console.log("Incoming Call detected!", data);
+                    
+                //     // Automatically open your custom dialer
+                //     if (typeof window.open_manual_dialer === 'function') {
+                //         window.open_manual_dialer();
+                        
+                //         // Optional: Force it to the dialpad tab if you want to show active call state immediately
+                //         $('.nav-link[data-tab="dialpad"]').click(); 
+                //     }
+                // });
             }
         })
         .catch(err => {
